@@ -401,10 +401,105 @@ def phones_cleanup(phones: List[str]) -> List[str]:
             if digits not in out:
                 out.append(digits)
     return out
+# --------------------
+# LLM Evaluation
+# --------------------
+def llm_extract_chunk(
+    chunk_text: str,
+    llm_client,
+    config: dict,
+    page_reference: str = "all",
+    categories: List[str] = None,
+    global_header: dict = None
+) -> Dict[str, Any]:
 
+    if llm_client is None or not config.get("use_llm_extract", False):
+        return {}
+
+    try:
+        cats = categories or []
+        prompt = LLM_PROMPT_TEMPLATE.format(
+            chunk_text=chunk_text[:15000],
+            categories=cats,
+            page_reference=page_reference,
+            global_header=json.dumps(global_header or {}, ensure_ascii=False)
+        )
+
+        resp = llm_client.chat.completions.create(
+            model=config["llm_model"],
+            messages=[{"role": "user", "content": prompt}],
+            temperature=config.get("llm_temperature", 0),
+            max_tokens=config.get("llm_max_tokens", 512)
+        )
+
+        raw = resp.choices[0].message.content.strip()
+        s, e = raw.find("{"), raw.rfind("}")
+        if s != -1 and e != -1:
+            return json.loads(raw[s:e+1])
+
+        return {}
+
+    except Exception as e:
+        print("LLM extract error:", e)
+        return {}
+# --------------------
+# Merge Regex & LLM Codes
+# --------------------
+def merge_candidates(regex_data: Dict[str, Any], llm_data: Dict[str, Any]) -> Dict[str, Any]:
+    final = {}
+    keys = set(list(regex_data.keys()) + list(llm_data.keys()))
+    for k in keys:
+        rv = regex_data.get(k)
+        lv = llm_data.get(k)
+        chosen = None
+        if rv and isinstance(rv, str):
+            # special sanitizers
+            if k in ("emd", "tender_fee", "performance_guarantee"):
+                rv = sanitize_amount_text(rv)
+            elif k in ("submission_deadline", "publication_date", "bid_opening_date"):
+                # keep date only
+                sd = sanitize_date_like(rv)
+                rv = sd or rv
+            # validate
+            if regex_value_valid(k, rv):
+                chosen = rv
+        if chosen is None and lv:
+            # try LLM candidate
+            if isinstance(lv, str):
+                if k in ("emd", "tender_fee", "performance_guarantee"):
+                    lv = sanitize_amount_text(lv)
+                elif k in ("submission_deadline", "publication_date", "bid_opening_date"):
+                    lv = sanitize_date_like(lv) or lv
+                if regex_value_valid(k, lv):
+                    chosen = lv
+            else:
+                chosen = lv
+        if chosen is None:
+            # defaults
+            chosen = [] if k in ("contact_emails", "contact_phones", "projects") else ""
+        final[k] = chosen
+
+    # post-lists cleanup
+
+    final["contact_emails"] = emails_cleanup(final.get("contact_emails") if isinstance(final.get("contact_emails"), list) else [])
+
+    final["contact_phones"] = phones_cleanup(final.get("contact_phones") if isinstance(final.get("contact_phones"), list) else [])
+
+    # category auto-detect if missing
+    final["category"] = detect_category(final.get("title",""), final.get("scope_of_work",""), final.get("category",""))
+    return final
+
+def read_json_safe(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+        
 
 
 
 
     return {}
+
 
