@@ -1,0 +1,9 @@
+pdfplumber
+pandas
+dash
+dash-bootstrap-components
+chromadb
+sentence-transformers
+pytesseract
+docx2txt
+openpyxl
