@@ -7,3 +7,8 @@ sentence-transformers
 pytesseract
 docx2txt
 openpyxl
+plotly
+openai
+pymupdf
+pillow
+python-dotenv
