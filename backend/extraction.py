@@ -143,25 +143,20 @@ GLOBAL_HEADER (if provided):
 TEXT (Page/Chunk = {page_reference}):
 {chunk_text}
 
-STRICT RULES (apply to every field):
-- If the field is not explicitly present, output "N/A" for strings and [] for arrays. DO NOT invent values.
-- Dates MUST be "DD-MM-YYYY". If you cannot form a valid date, output "N/A".
-- Times MUST be "HH:MM AM/PM" (e.g., "03:00 PM"). Else "N/A".
-- Monetary fields (EMD, Tender Fee) MUST be concise values ONLY (e.g., "₹ 70,000", "Rs. 1,000", "2%"). No sentences.
-- Performance Guarantee: ONLY a percent or an amount (e.g., "5%" or "₹ 1,00,000"). No sentences.
-- Contract Duration: concise value ONLY (e.g., "120 days", "2 Years"). No sentences.
-- Issuing Authority: organization name ONLY (no bullets, no address, no policy headers like MSME/Make in India/GeM).
-- Contact Emails/Phones: arrays of items; no labels like "Cell" or "Ph".
-- Category: choose the best-fit from this list only: {categories}
-- Scope of Work: short, no more than 6 lines (≈400 chars), concise.
-- Short Summary: 3–4 short lines (<100 words) — no repetition, no marketing.
-- Projects: if multiple distinct sub-projects appear, list them briefly (each entry as a short string); else [].
-- Bidding Scope: single sentence; if absent, "N/A".
+EXTRACTION GUIDELINES:
+- If a field is not present, use "N/A" for strings and [] for arrays, BUT use your best judgement to infer from context.
+- Dates: Preferred "DD-MM-YYYY". If approximate, provide as found.
+- Times: Preferred "HH:MM AM/PM".
+- Monetary fields: concise values like "₹ 70,000", "Rs. 1 Lakh", "2%".
+- Issuing Authority: Organization name.
+- Category: Choose best-fit from: {categories}
+- Scope of Work: concise description (approx 400 chars).
+- Short Summary: A COMPREHENSIVE summary (approx 100-150 words) covering scope, key dates, and requirements. GENERATE THIS from the content; do NOT return "N/A".
+- Projects: list distinct sub-projects if any.
 
-CRITICAL EXTRACTION RULES FOR KEY FIELDS:
-- tender_id: Look for "Tender ID", "Tender No", "Tender Ref", "NIT No", "RFQ No", "e-Tender ID". Must be alphanumeric code. Never leave blank if found.
-- publication_date: FIRST mention of tender date, bid calling date, issue date, or advertised date. Format exactly DD-MM-YYYY.
-- short_summary: Concise overview of tender scope, work type, and deliverables. 3-4 sentences max, under 100 words. Ignore marketing language.
+CRITICAL EXTRACTION RULES:
+- tender_id: Look particularly for patterns like "Tender ID", "NIT No", "Ref No".
+- publication_date: Look for the earliest date mentioned as issue/start date.
 
 OUTPUT FORMAT:
 - Return JSON only. No markdown, no commentary, no trailing text.
@@ -361,7 +356,7 @@ def postprocess_llm_json(d: Dict[str, Any]) -> Dict[str, Any]:
     cats = set(ICON_STYLE_MAP.keys())
     if out.get("category") not in cats:
         out["category"] = ""
-    for k, limit in (("scope_of_work", 500), ("short_summary", 400), ("eligibility_summary", 600), ("required_documents", 600)):
+    for k, limit in (("scope_of_work", 1000), ("short_summary", 2000), ("eligibility_summary", 800), ("required_documents", 800)):
         v = (out.get(k) or "").strip()
         out[k] = v[:limit]
     return out

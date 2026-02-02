@@ -36,7 +36,7 @@ CONFIG = {
     "azure_api_version": azure_api_version,
     "llm_model": azure_deployment_name,
     "llm_temperature": 0.0, #Value from 0-1, lower value gives predictable and stable results, higher value gives random results.
-    "llm_max_tokens": 1000,
+    "llm_max_tokens": 2000,
     "use_llm_extract": True,
     "use_llm_eval": True,
     "use_llm_summary": True,
