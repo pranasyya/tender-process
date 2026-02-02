@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useTender, type ChatMessage } from '@/app/context/TenderContext';
+import { api } from '@/lib/api';
 import {
   Send,
   X,
@@ -41,33 +42,9 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const generateMockAIResponse = (query: string): string => {
-    const lowerQuery = query.toLowerCase();
-    
-    if (lowerQuery.includes('o&m') || lowerQuery.includes('operation')) {
-      return MOCK_AI_RESPONSES['O&M'];
-    }
-    if (lowerQuery.includes('emd') || lowerQuery.includes('earnest')) {
-      return MOCK_AI_RESPONSES['EMD'];
-    }
-    if (lowerQuery.includes('deadline') || lowerQuery.includes('earliest')) {
-      return MOCK_AI_RESPONSES['deadline'];
-    }
-    if (lowerQuery.includes('surat') && lowerQuery.includes('scope')) {
-      return MOCK_AI_RESPONSES['scope'];
-    }
-
-    // Default response based on context
-    if (selectedTenderContext) {
-      return `Based on the ${selectedTenderContext.title}, I can provide the following information: The project is valued at ₹${selectedTenderContext.valueInCrores} Crores with an EMD of ₹${selectedTenderContext.emdInCrores} Crores. The deadline is ${new Date(selectedTenderContext.deadlineDate).toLocaleDateString()}. This ${selectedTenderContext.contractType} contract spans ${selectedTenderContext.duration}. For more detailed information, please refer to the tender document.`;
-    }
-
-    return "I don't have enough information about that specific detail. Please provide more context or ask about specific tender requirements.";
-  };
-
   const handleSendMessage = async (message?: string) => {
     const messageText = message || inputValue.trim();
-    
+
     if (!messageText) return;
 
     // Add user message
@@ -82,23 +59,39 @@ export default function ChatPage() {
     setInputValue('');
     setIsLoading(true);
 
-    // Simulate AI response delay
-    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
+    try {
+      // Construct query with context if available
+      let finalQuery = messageText;
+      if (selectedTenderContext) {
+        finalQuery = `Context: Tender "${selectedTenderContext.title}" (ID: ${selectedTenderContext.id}). \nQuestion: ${messageText}`;
+      }
 
-    // Generate mock AI response
-    const aiResponse: ChatMessage = {
-      id: Math.random().toString(36).substr(2, 9),
-      role: 'assistant',
-      content: generateMockAIResponse(messageText),
-      timestamp: new Date(),
-      sources: selectedTenderContext
-        ? [{ tenderName: selectedTenderContext.title, page: Math.floor(Math.random() * 10) + 1 }]
-        : undefined,
-    };
+      const data = await api.chatWithAI(finalQuery);
 
-    setLocalChatHistory(prev => [...prev, aiResponse]);
-    setIsLoading(false);
-    scrollToBottom();
+      const aiResponse: ChatMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        role: 'assistant',
+        content: data.response,
+        timestamp: new Date(),
+        sources: data.context ? data.context.map((c: any) => ({
+          tenderName: c.meta.title || 'Unknown',
+          page: 1 // Backend might not return page num yet
+        })) : undefined
+      };
+      setLocalChatHistory(prev => [...prev, aiResponse]);
+    } catch (err) {
+      console.error("Chat error", err);
+      const errorMsg: ChatMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        role: 'assistant',
+        content: "Sorry, I'm having trouble connecting to the server.",
+        timestamp: new Date(),
+      };
+      setLocalChatHistory(prev => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+      scrollToBottom();
+    }
   };
 
   const handleSuggestedQuestion = (question: string) => {
@@ -189,11 +182,10 @@ export default function ChatPage() {
                       className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in duration-300`}
                     >
                       <div
-                        className={`max-w-xl px-5 py-3 rounded-xl shadow-sm ${
-                          message.role === 'user'
-                            ? 'bg-primary text-primary-foreground rounded-br-none'
-                            : 'bg-muted text-foreground rounded-bl-none border border-border/50'
-                        }`}
+                        className={`max-w-xl px-5 py-3 rounded-xl shadow-sm ${message.role === 'user'
+                          ? 'bg-primary text-primary-foreground rounded-br-none'
+                          : 'bg-muted text-foreground rounded-bl-none border border-border/50'
+                          }`}
                       >
                         <p className="text-sm leading-relaxed">{message.content}</p>
                         <p className={`text-xs mt-2 ${message.role === 'user' ? 'opacity-70' : 'opacity-60'}`}>

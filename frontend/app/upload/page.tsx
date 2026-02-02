@@ -1,11 +1,10 @@
 'use client';
 
-import React from "react"
-
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTender } from '@/app/context/TenderContext';
 import { Upload, X, File, CheckCircle, AlertCircle } from 'lucide-react';
+import { api } from '@/lib/api';
 
 const PROCESSING_STAGES = ['Text Extraction', 'AI Analysis', 'Vector Embedding', 'Summarization'];
 const MOCK_TENDERS = [
@@ -40,6 +39,7 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [processingState, setProcessingState] = useState<'idle' | 'processing' | 'complete'>('idle');
   const [uploadedPreviously, setUploadedPreviously] = useState<string[]>([]);
+  const [fileMap, setFileMap] = useState<Map<string, File>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -57,14 +57,12 @@ export default function UploadPage() {
 
     Array.from(files).forEach(file => {
       if (!['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.type)) {
-        // Invalid type - skip silently as per validation
         return;
       }
       if (file.size > 50 * 1024 * 1024) {
-        // File too large - skip silently
         return;
       }
-      
+
       if (uploadedFiles.some(f => f.name === file.name) || uploadedPreviously.includes(file.name)) {
         duplicates.push(file.name);
       } else {
@@ -78,6 +76,9 @@ export default function UploadPage() {
 
     validFiles.forEach(file => {
       const fileId = Math.random().toString(36).substr(2, 9);
+      // Store file object locally since context might not persist it
+      setFileMap(prev => new Map(prev).set(fileId, file));
+
       addFile({
         id: fileId,
         name: file.name,
@@ -102,38 +103,79 @@ export default function UploadPage() {
 
   const handleRemoveFile = (fileId: string) => {
     removeFile(fileId);
+    setFileMap(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(fileId);
+      return newMap;
+    });
   };
 
-  const simulateProcessing = async () => {
+  const handleStartProcessing = async () => {
+    if (uploadedFiles.length === 0) return;
     setProcessingState('processing');
 
-    for (const file of uploadedFiles) {
-      for (const stage of PROCESSING_STAGES) {
-        const startProgress = (PROCESSING_STAGES.indexOf(stage) / PROCESSING_STAGES.length) * 100;
-        const endProgress = ((PROCESSING_STAGES.indexOf(stage) + 1) / PROCESSING_STAGES.length) * 100;
+    // Get files from map
+    const filesToUpload: File[] = [];
+    uploadedFiles.forEach(uf => {
+      const f = fileMap.get(uf.id);
+      if (f) filesToUpload.push(f);
+    });
 
-        for (let progress = startProgress; progress < endProgress; progress += Math.random() * 15) {
-          updateFileProgress(file.id, Math.min(progress, endProgress - 1), stage);
-          await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 700));
-        }
-        updateFileProgress(file.id, endProgress, stage);
-      }
-      updateFileProgress(file.id, 100, 'Complete');
+    if (filesToUpload.length === 0) {
+      // Fallback: if we lost the files (e.g. reload), we can't upload.
+      // In a real app we'd warn or handle this.
+      // For now, assume flow is: upload -> process immediately.
+      console.warn("No file objects found in map");
+      // Try to proceed if maybe they are just already uploaded? 
+      // No, current API requires re-upload for analysis.
+      alert("Files missing from memory. Please re-upload.");
+      setProcessingState('idle');
+      return;
     }
 
-    // Simulate delay before completion
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setProcessingState('complete');
-  };
+    try {
+      // 1. Upload
+      uploadedFiles.forEach(f => updateFileProgress(f.id, 10, 'Uploading...'));
+      await api.uploadFiles(filesToUpload);
 
-  const handleStartProcessing = () => {
-    if (uploadedFiles.length > 0) {
-      simulateProcessing();
+      // 2. Poll Progress
+      uploadedFiles.forEach(f => updateFileProgress(f.id, 20, 'Queued'));
+
+      let complete = false;
+      while (!complete) {
+        await new Promise(r => setTimeout(r, 1000));
+        const prog = await api.getProgress();
+
+        if (prog.status === 'done') {
+          complete = true;
+          uploadedFiles.forEach(f => updateFileProgress(f.id, 100, 'Complete'));
+        } else if (prog.status === 'running') {
+          // Estimate progress based on 'done' count vs 'total'
+          const pct = Math.floor(((prog.done || 0) / (prog.total || 1)) * 100);
+          const stageName = prog.current_file ? `Processing ${prog.current_file}` : 'Processing...';
+          uploadedFiles.forEach(f => {
+            // Very rough progress mapping since backend gives global progress, not per-file
+            const base = 20;
+            const remaining = 80;
+            updateFileProgress(f.id, base + (pct * remaining / 100), stageName);
+          });
+        }
+      }
+      setProcessingState('complete');
+    } catch (e) {
+      console.error("Upload failed", e);
+      uploadedFiles.forEach(f => updateFileProgress(f.id, 0, 'Failed'));
+      setProcessingState('idle');
     }
   };
 
   const handleGoToDashboard = () => {
-    completeTenderProcessing(MOCK_TENDERS);
+    // We can clear the context tenders or pass the new ones if we fetched them.
+    // Dashboard now fetches from API, so we just need to navigate.
+    // We call completeTenderProcessing to potentially clear upload state or update context if needed.
+    // Passing MOCK_TENDERS here just to satisfy the type/function, but Dashboard will ignore it 
+    // because we updated Dashboard to fetch from API.
+    completeTenderProcessing([]);
     router.push('/dashboard');
   };
 
@@ -173,11 +215,10 @@ export default function UploadPage() {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className={`mb-8 p-12 border-2 border-dashed rounded-xl transition-colors cursor-pointer ${
-            isDragging
+          className={`mb-8 p-12 border-2 border-dashed rounded-xl transition-colors cursor-pointer ${isDragging
               ? 'border-primary bg-blue-50'
               : 'border-border bg-muted hover:border-primary hover:bg-blue-50'
-          }`}
+            }`}
         >
           <input
             ref={fileInputRef}
@@ -263,11 +304,10 @@ export default function UploadPage() {
                 <div key={stage} className="flex items-center gap-4">
                   <div className="flex flex-col items-center">
                     <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
-                        uploadedFiles[0]?.progress >= ((idx + 1) / PROCESSING_STAGES.length) * 100
+                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${uploadedFiles[0]?.progress >= ((idx + 1) / PROCESSING_STAGES.length) * 100
                           ? 'bg-primary text-primary-foreground'
                           : 'bg-muted text-muted-foreground'
-                      }`}
+                        }`}
                     >
                       {uploadedFiles[0]?.progress >= ((idx + 1) / PROCESSING_STAGES.length) * 100 ? (
                         <CheckCircle className="w-5 h-5" />
@@ -304,7 +344,7 @@ export default function UploadPage() {
                 <div>
                   <h3 className="font-semibold text-green-900 mb-1">Processing Complete</h3>
                   <p className="text-sm text-green-800">
-                    Successfully processed {uploadedFiles.length} file{uploadedFiles.length !== 1 ? 's' : ''}. 
+                    Successfully processed {uploadedFiles.length} file{uploadedFiles.length !== 1 ? 's' : ''}.
                     New tenders are ready to view.
                   </p>
                 </div>

@@ -1,3 +1,9 @@
 venv
+__pycache__
+uploads
+outputs
+TenderAnalyser.py
+Analyser.py
+dummy_tender.txt
 AI Keys.xlsx
-
+modules.py

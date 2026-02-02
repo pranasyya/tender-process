@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSearchParams } from 'next/navigation';
 import { useTender, type Tender } from '@/app/context/TenderContext';
+import { api } from '@/lib/api';
 import {
   Search,
   X,
@@ -24,13 +25,33 @@ import Loading from './loading';
 export default function DashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { tenders, filters, setFilters, selectedTender, setSelectedTender } = useTender();
+  const { filters, setFilters, selectedTender, setSelectedTender } = useTender();
+
+  // Local state for tenders fetched from API
+  const [tenders, setTenders] = useState<Tender[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [expandedPanel, setExpandedPanel] = useState<Tender | null>(null);
+
+  useEffect(() => {
+    const fetchTenders = async () => {
+      try {
+        const data = await api.getTenders();
+        // Cast or map to Context Tender type if needed, but they should be compatible based on my design
+        setTenders(data as any);
+      } catch (err) {
+        console.error("Failed to fetch tenders", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchTenders();
+  }, []);
 
   const handleAskAI = (tender: Tender) => {
     setSelectedTender(tender);
     router.push('/chat');
   };
+
 
   const handleMoreDetails = (tender: Tender) => {
     setExpandedPanel(tender);
@@ -250,11 +271,10 @@ export default function DashboardPage() {
                       {tender.tags.map(tag => (
                         <span
                           key={tag}
-                          className={`text-xs px-3 py-1 rounded-full font-semibold ${
-                            tag === 'High O&M scope'
+                          className={`text-xs px-3 py-1 rounded-full font-semibold ${tag === 'High O&M scope'
                               ? 'bg-primary/20 text-primary border border-primary/30'
                               : 'bg-secondary/20 text-secondary border border-secondary/30'
-                          }`}
+                            }`}
                         >
                           {tag}
                         </span>
@@ -309,11 +329,10 @@ export default function DashboardPage() {
             )}
 
             <div
-              className={`${
-                expandedPanel 
+              className={`${expandedPanel
                   ? 'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-2xl max-h-[80vh] overflow-y-auto'
                   : 'hidden lg:block'
-              } p-8 border border-white/20 rounded-2xl bg-card/80 backdrop-blur-xl shadow-2xl`}
+                } p-8 border border-white/20 rounded-2xl bg-card/80 backdrop-blur-xl shadow-2xl`}
             >
               {expandedPanel ? (
                 <>
