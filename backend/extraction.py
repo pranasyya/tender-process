@@ -57,6 +57,7 @@ REGEX_PATTERNS = {
     "tender_id": r"(?im)\b(?:Tender\s*(?:Ref\.?|No\.?)|NIT\s*No\.?|e-?Tender\s*(?:No\.|ID)|RFQ\s*No\.?|Tender\s*Document\s*No\.?)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{4,})",
     "title": r"(?i)(?:Name\s*of\s*Work|Title|Project\s*Title)\s*[:\-]\s*(.+)",
     "issuing_authority": r"(?i)\b(?:Issued\s*By|Issuing\s*Authority|Organization|Department|Office)\s*[:\-]\s*(.+)",
+    "location": r"(?i)\b(?:Location|Place\s*of\s*Bid|Place\s*of\s*Work)\s*[:\-]\s*(.+)",
     "publication_date": r"(?i)\b(?:Bid\s*calling|Publication\s*Date|Date\s*of\s*issue)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
     "submission_deadline": r"(?i)(?:Last\s*Date\s*(?:of)?\s*(?:Submission|Bid\s*Submission|Receipt)|Bid\s*Closing)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
     "bid_opening_date": r"(?i)\b(?:Bid\s*opening|Opening\s*Date)\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
@@ -69,6 +70,8 @@ REGEX_PATTERNS = {
     "contact_phones": r"(?:(?:\+91[-\s]?)?[\(]?\d{3,5}[\)]?[-\s]?\d{5,8}|\b\d{10}\b)",
     "tender_value": r"(?i)\b(?:Estimated\s*Cost|Tender\s*Value|Project\s*Cost|Approx\.?\s*Value)\b[^\n\r]{0,30}?[:\-]?\s*([^\n\r]{1,120})",
 }
+
+LIST_FIELDS = {"contact_emails", "contact_phones", "projects"}
 
 ICON_STYLE_MAP = {
     "Water Treatment": {"emoji": "💧", "color": "#0ea5e9"},
@@ -119,6 +122,7 @@ SCHEMA = {{
   "submission_deadline": "",
   "bid_opening_date": "",
   "bid_opening_time": "",
+  "tender_value": "",
   "emd": "",
   "tender_fee": "",
   "performance_guarantee": "",
@@ -155,18 +159,47 @@ EXTRACTION GUIDELINES:
 - Projects: list distinct sub-projects if any.
 
 CRITICAL EXTRACTION RULES:
-- tender_id: Look particularly for patterns like "Tender ID", "NIT No", "Ref No".
+- tender_id: ONLY extract if it appears verbatim in TEXT (e.g., "Tender ID", "NIT No", "Ref No"). Do NOT infer or generate.
 - publication_date: Look for the earliest date mentioned as issue/start date.
 
 OUTPUT FORMAT:
 - Return JSON only. No markdown, no commentary, no trailing text.
 """
 
+LLM_FIELD_PROMPT_TEMPLATE = r"""
+You are an information extraction system. Extract ONLY the fields in SCHEMA from the TEXT.
+Use GLOBAL_HEADER as context if the header appears only once in the document.
+
+SCHEMA = {schema_json}
+
+GLOBAL_HEADER (if provided):
+{global_header}
+
+TEXT (Page/Chunk = {page_reference}):
+{chunk_text}
+
+EXTRACTION GUIDELINES:
+- If a field is not present, use "N/A" for strings and [] for arrays, BUT use your best judgement to infer from context.
+- Dates: Preferred "DD-MM-YYYY". If approximate, provide as found.
+- Times: Preferred "HH:MM AM/PM".
+- Monetary fields: concise values like "₹ 70,000", "Rs. 1 Lakh", "2%".
+- Issuing Authority: Organization name.
+- Category: Choose best-fit from: {categories}
+- Scope of Work: concise description (approx 400 chars).
+- Short Summary: A COMPREHENSIVE summary (approx 100-150 words) covering scope, key dates, and requirements. GENERATE THIS from the content; do NOT return "N/A".
+- tender_id: ONLY extract if it appears verbatim in TEXT. Do NOT infer or generate.
+
+OUTPUT FORMAT:
+- Return JSON only. No markdown, no commentary, no trailing text.
+"""
+
 EVAL_PROMPT = """
-You are a business analyst. Based on the tender details below, assign:
-- priority_score (1-10)
-- pursue_recommendation (PURSUE / DO NOT PURSUE)
-Provide concise reasoning.
+You are a business analyst. Based on the tender details below, return a JSON object with:
+- priority_score (1-10, number)
+- recommendation (PURSUE / REVIEW / DO NOT PURSUE)
+- key_risks (short string summarizing key risks or gaps)
+
+Return JSON only.
 
 Tender JSON:
 {tender_json}
@@ -236,20 +269,37 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
 def regex_extract(text: str) -> Dict[str, Any]:
     extracted = {}
-    tender_id_patterns = [
-        r"Tender\s*(?:Ref\.?|ID|No\.?|Reference|Number)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
-        r"NIT\s*No\.?\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
-        r"e-?Tender\s*(?:No\.|ID|Reference)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
-        r"Bid\s*(?:No\.|ID|Reference)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
-        r"RFQ\s*No\.?\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
-    ]
-    for pat in tender_id_patterns:
-        m = re.search(pat, text, re.I | re.S)
-        if m:
-            tender_id_candidate = m.group(1).strip()
-            if len(tender_id_candidate) >= 3 and tender_id_candidate.upper() != "N/A":
-                extracted["tender_id"] = tender_id_candidate
-                break
+    head = text[:4000]
+
+    # Header-based fields (more reliable for cover pages)
+    tid = extract_tender_id_from_head(head)
+    if tid:
+        extracted["tender_id"] = tid
+    title = extract_title_from_head(head)
+    if title:
+        extracted["title"] = title
+    ia = extract_issuing_authority_from_head(head)
+    if ia:
+        extracted["issuing_authority"] = ia
+    loc = extract_location_from_text(text)
+    if loc:
+        extracted["location"] = loc
+
+    if "tender_id" not in extracted:
+        tender_id_patterns = [
+            r"Tender\s*(?:Ref\.?|ID|No\.?|Reference|Number)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
+            r"NIT\s*No\.?\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
+            r"e-?Tender\s*(?:No\.|ID|Reference)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
+            r"Bid\s*(?:No\.|ID|Reference)\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
+            r"RFQ\s*No\.?\s*[:\-]?\s*([A-Za-z0-9_\/\-\.\(\)]{3,})",
+        ]
+        for pat in tender_id_patterns:
+            m = re.search(pat, text, re.I | re.S)
+            if m:
+                tender_id_candidate = m.group(1).strip()
+                if len(tender_id_candidate) >= 3 and tender_id_candidate.upper() != "N/A":
+                    extracted["tender_id"] = tender_id_candidate
+                    break
     if "tender_id" not in extracted:
         fallback = re.findall(r"\b[A-Z]{2,}-\d+\b", text)
         if fallback:
@@ -275,6 +325,17 @@ def regex_extract(text: str) -> Dict[str, Any]:
         else:
             m = re.search(pattern, text, flags=re.I | re.S)
             extracted[field] = m.group(1).strip() if m else ""
+
+    # Keyword-near extraction for monetary fields if regex got only labels
+    if not extracted.get("emd") or extracted.get("emd","").strip().lower() in {"emd", "(emd)"}:
+        amt = extract_amount_near_keyword(text, r"\b(?:EMD|Earnest\s*Money(?:\s*Deposit)?)\b")
+        if amt:
+            extracted["emd"] = amt
+    if not extracted.get("tender_fee"):
+        fee = extract_amount_near_keyword(text, r"\b(?:Tender\s*Fee|Bid\s*Document\s*Fee|Document\s*Fee)\b")
+        if fee:
+            extracted["tender_fee"] = fee
+
     return extracted
 
 def build_global_header(full_text: str) -> dict:
@@ -324,12 +385,40 @@ def llm_evaluate(tender_json: dict):
         resp = LLM_CLIENT.chat.completions.create(model=CONFIG["llm_model"], messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=500)
         raw = resp.choices[0].message.content.strip()
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
+            # Backward-compat: map old keys if present
+            if "pursue_recommendation" in data and "recommendation" not in data:
+                data["recommendation"] = data.get("pursue_recommendation")
+            return data
         except Exception:
-            return {"pursue_recommendation": raw}
+            return {"recommendation": raw}
     except Exception as e:
         print("LLM eval error:", e)
         return {}
+
+def evaluate_fallback(tender_json: dict) -> dict:
+    """
+    Simple heuristic evaluation when LLM isn't available.
+    """
+    risks = []
+    if not tender_json.get("submission_deadline") or tender_json.get("submission_deadline") == "N/A":
+        risks.append("Submission deadline not found")
+    if not tender_json.get("emd") or tender_json.get("emd") == "N/A":
+        risks.append("EMD not specified")
+    if not tender_json.get("scope_of_work") or tender_json.get("scope_of_work") == "N/A":
+        risks.append("Scope of work not summarized")
+
+    priority = 6
+    if tender_json.get("emd") and tender_json.get("emd") != "N/A":
+        priority = 7
+    if tender_json.get("submission_deadline") and tender_json.get("submission_deadline") != "N/A":
+        priority = max(priority, 7)
+
+    return {
+        "priority_score": priority,
+        "recommendation": "REVIEW",
+        "key_risks": "; ".join(risks) if risks else "No major risks detected from extracted fields"
+    }
 
 def postprocess_llm_json(d: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(d or {})
@@ -367,6 +456,15 @@ def merge_candidates(regex_data: Dict[str, Any], llm_data: Dict[str, Any]) -> Di
     for k in keys:
         rv = regex_data.get(k)
         lv = llm_data.get(k)
+        if k in LIST_FIELDS:
+            combined: List[str] = []
+            for src in (rv, lv):
+                if isinstance(src, list):
+                    combined.extend([s for s in src if s])
+                elif isinstance(src, str) and src.strip():
+                    combined.extend([s.strip() for s in re.split(r"[,\n;]+", src) if s.strip()])
+            final[k] = list(dict.fromkeys(combined))
+            continue
         chosen = None
         if rv and isinstance(rv, str):
             if k in ("emd", "tender_fee", "performance_guarantee"):
@@ -387,7 +485,7 @@ def merge_candidates(regex_data: Dict[str, Any], llm_data: Dict[str, Any]) -> Di
             else:
                 chosen = lv
         if chosen is None:
-            chosen = [] if k in ("contact_emails", "contact_phones", "projects") else ""
+            chosen = ""
         final[k] = chosen
     final["contact_emails"] = emails_cleanup(final.get("contact_emails") if isinstance(final.get("contact_emails"), list) else [])
     final["contact_phones"] = phones_cleanup(final.get("contact_phones") if isinstance(final.get("contact_phones"), list) else [])
@@ -397,6 +495,253 @@ def merge_candidates(regex_data: Dict[str, Any], llm_data: Dict[str, Any]) -> Di
 # --------------------
 # Helpers
 # --------------------
+
+def is_empty_value(field: str, value: Any) -> bool:
+    if field in LIST_FIELDS:
+        return not value or (isinstance(value, list) and len(value) == 0)
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == "" or value.strip().upper() in {"N/A", "NA", "NONE"}
+    return False
+
+def schema_for_fields(fields: List[str]) -> Dict[str, Any]:
+    return {f: ([] if f in LIST_FIELDS else "") for f in fields}
+
+def merge_llm_dicts(dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for d in dicts or []:
+        for k, v in (d or {}).items():
+            if k in LIST_FIELDS and isinstance(v, list):
+                existing = merged.get(k, [])
+                combined = []
+                for item in (existing or []) + v:
+                    if item and item not in combined:
+                        combined.append(item)
+                merged[k] = combined
+                continue
+            if is_empty_value(k, v):
+                continue
+            if is_empty_value(k, merged.get(k)):
+                merged[k] = v
+    return merged
+
+def llm_extract_fields(chunk_text: str, fields: List[str], page_reference: str = "rag", categories: List[str] = None, global_header: dict = None) -> Dict[str, Any]:
+    if LLM_CLIENT is None or not CONFIG["use_llm_extract"]:
+        return {}
+    if not chunk_text or not chunk_text.strip():
+        return {}
+    try:
+        cats = categories or list(ICON_STYLE_MAP.keys())
+        schema_json = json.dumps(schema_for_fields(fields), ensure_ascii=False)
+        prompt = LLM_FIELD_PROMPT_TEMPLATE.format(
+            chunk_text=chunk_text[:15000],
+            categories=cats,
+            page_reference=page_reference,
+            global_header=json.dumps(global_header or {}, ensure_ascii=False),
+            schema_json=schema_json
+        )
+        resp = LLM_CLIENT.chat.completions.create(
+            model=CONFIG["llm_model"],
+            messages=[{"role":"user","content": prompt}],
+            temperature=CONFIG["llm_temperature"],
+            max_tokens=CONFIG["llm_max_tokens"]
+        )
+        raw = resp.choices[0].message.content.strip()
+        s, e = raw.find("{"), raw.rfind("}")
+        if s != -1 and e != -1:
+            return json.loads(raw[s:e+1])
+        return {}
+    except Exception as e:
+        print("LLM extract error:", e)
+        return {}
+
+def chunk_text(text: str, max_chars: int = 3500, overlap: int = 400) -> List[str]:
+    if not text:
+        return []
+    size = max(500, int(max_chars))
+    overlap = max(0, min(int(overlap), size - 1))
+    chunks: List[str] = []
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(n, start + size)
+        chunk = text[start:end]
+        if end < n:
+            nl = chunk.rfind("\n")
+            if nl != -1 and nl > size - 300:
+                end = start + nl
+                chunk = text[start:end]
+        chunk = chunk.strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= n:
+            break
+        start = max(0, end - overlap)
+        if start >= n:
+            break
+    return chunks
+
+def build_context_from_hits(hits: List[Dict[str, Any]], max_chars: int = 12000) -> str:
+    if not hits:
+        return ""
+    parts: List[str] = []
+    seen = set()
+    total = 0
+    for h in hits:
+        t = (h.get("text") or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        if total + len(t) > max_chars:
+            t = t[: max_chars - total]
+        parts.append(t)
+        total += len(t)
+        if total >= max_chars:
+            break
+    return "\n\n".join(parts)
+
+def extract_tender_id_from_head(head: str) -> str:
+    if not head:
+        return ""
+    for line in head.splitlines()[:20]:
+        s = line.strip()
+        if not s or len(s) < 6:
+            continue
+        if re.fullmatch(r"[A-Z0-9][A-Z0-9/._-]{5,}", s) and any(ch.isdigit() for ch in s):
+            return s
+        m = re.search(r"(?i)\b(?:Tender|NIT|RFP|RFQ|Ref|Bid)\b[^A-Za-z0-9]*([A-Z0-9/._-]{4,})", s)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+def extract_title_from_head(head: str) -> str:
+    if not head:
+        return ""
+    lines = [l.strip() for l in head.splitlines() if l.strip()]
+    for i, line in enumerate(lines[:20]):
+        if re.search(r"Request\s*for\s*Proposal", line, re.I):
+            collected = []
+            for nxt in lines[i+1:i+6]:
+                if re.search(r"^(Page|Contents)\b", nxt, re.I):
+                    break
+                if nxt.lower() in {"for", "to"}:
+                    continue
+                collected.append(nxt)
+            title = " ".join(collected).strip()
+            if len(title) >= 10:
+                return title.strip().strip("\"'")
+    m = re.search(r"(?is)Request\s*for\s*Proposal.*?for\s+(.+)", head)
+    if m:
+        title_line = re.split(r"\n|$", m.group(1).strip())[0]
+        if len(title_line) >= 10:
+            return title_line.strip().strip("\"'")
+    m = re.search(r"(?i)(?:Name\s*of\s*Work|Title|Project\s*Title)\s*[:\-]\s*(.+)", head)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+def extract_issuing_authority_from_head(head: str) -> str:
+    if not head:
+        return ""
+    lines = [l.strip() for l in head.splitlines() if l.strip()]
+    for line in lines[:15]:
+        if re.search(r"(Bureau|Department|Ministry|Authority|Directorate|Council|Corporation|Board|Commission)", line, re.I):
+            return line
+    return ""
+
+def extract_location_from_text(text: str) -> str:
+    if not text:
+        return ""
+    for line in text.splitlines():
+        if re.search(r"\b\d{6}\b", line):
+            clean = re.sub(r"\s+", " ", line).strip()
+            if 8 <= len(clean) <= 120:
+                return clean
+    return ""
+
+def extract_amount_near_keyword(text: str, keyword_pattern: str, window: int = 400) -> str:
+    if not text:
+        return ""
+    m = re.search(keyword_pattern, text, re.I)
+    if not m:
+        return ""
+    snippet = text[m.start(): m.start() + window]
+    m_amt = re.search(r"(?i)(₹|â‚¹|rs\.?|rupees|inr)\s*([0-9][\d,\.]*)\s*(lacks?|lakhs?|lacs?|crores?)?", snippet)
+    if m_amt:
+        return sanitize_amount_text(m_amt.group(0))
+    m_pct = re.search(r"(?i)\b(\d{1,3}(?:\.\d{1,2})?)\s*%(\b|$)", snippet)
+    if m_pct:
+        return f"{m_pct.group(1)}%"
+    return ""
+
+def build_fallback_summary(meta: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    title = (meta.get("title") or "").strip()
+    issuing = (meta.get("issuing_authority") or "").strip()
+    location = (meta.get("location") or "").strip()
+    pub = (meta.get("publication_date") or "").strip()
+    sub = (meta.get("submission_deadline") or "").strip()
+    open_dt = (meta.get("bid_opening_date") or "").strip()
+    emd = (meta.get("emd") or "").strip()
+    fee = (meta.get("tender_fee") or "").strip()
+    perf = (meta.get("performance_guarantee") or "").strip()
+    duration = (meta.get("contract_duration") or "").strip()
+    scope = (meta.get("scope_of_work") or "").strip()
+    eligibility = (meta.get("eligibility_summary") or "").strip()
+
+    if title:
+        parts.append(f"This tender is for {title}.")
+    if issuing:
+        parts.append(f"Issued by {issuing}.")
+    if location and location.upper() != "N/A":
+        parts.append(f"Location: {location}.")
+    dates = []
+    if pub and pub.upper() != "N/A":
+        dates.append(f"publication date {pub}")
+    if sub and sub.upper() != "N/A":
+        dates.append(f"submission deadline {sub}")
+    if open_dt and open_dt.upper() != "N/A":
+        dates.append(f"bid opening date {open_dt}")
+    if dates:
+        parts.append("Key dates include " + ", ".join(dates) + ".")
+    money_bits = []
+    if emd and emd.upper() != "N/A":
+        money_bits.append(f"EMD {emd}")
+    if fee and fee.upper() != "N/A":
+        money_bits.append(f"Tender fee {fee}")
+    if perf and perf.upper() != "N/A":
+        money_bits.append(f"Performance guarantee {perf}")
+    if money_bits:
+        parts.append("Financial terms: " + "; ".join(money_bits) + ".")
+    if duration and duration.upper() != "N/A":
+        parts.append(f"Contract duration: {duration}.")
+    if scope:
+        parts.append(f"Scope of work: {scope}")
+    if eligibility:
+        parts.append(f"Eligibility highlights: {eligibility}")
+
+    summary = " ".join(p.strip() for p in parts if p and p.strip())
+    return summary[:1200].strip()
+
+def build_fallback_summary_from_text(text: str, meta: Dict[str, Any]) -> str:
+    """
+    Create a short summary from raw text when structured fields are sparse.
+    """
+    if not text:
+        return build_fallback_summary(meta)
+    # Prefer paragraphs with key terms
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    keywords = ["invites", "request for proposal", "scope of work", "eligibility", "submission", "deadline"]
+    for p in paragraphs[:20]:
+        low = p.lower()
+        if any(k in low for k in keywords) and len(p) > 80:
+            return p[:1200]
+    # Fallback to first non-empty lines
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if lines:
+        return " ".join(lines[:6])[:1200]
+    return build_fallback_summary(meta)
 
 def sanitize_amount_text(val: str) -> str:
     if not val:
@@ -408,9 +753,9 @@ def sanitize_amount_text(val: str) -> str:
     m_pct = re.search(r"(?i)\b(\d{1,3}(?:\.\d{1,2})?)\s*%(\b|$)", s)
     if m_pct:
         return f"{m_pct.group(1)}%"
-    m_amt = re.search(r"(?i)(₹|rs\.?|rupees)\s*([0-9][\d,\.]*)\s*(lacks?|lakhs?|lacs?|crores?)?", s)
+    m_amt = re.search(r"(?i)(₹|â‚¹|rs\.?|rupees|inr)\s*([0-9][\d,\.]*)\s*(lacks?|lakhs?|lacs?|crores?)?", s)
     if m_amt:
-        cur = "₹" if m_amt.group(1).lower().startswith("₹") else "Rs."
+        cur = "₹" if ("₹" in m_amt.group(1) or "â‚¹" in m_amt.group(1)) else "Rs."
         num = m_amt.group(2)
         unit = m_amt.group(3) or ""
         unit = unit.capitalize() if unit else ""
@@ -429,6 +774,9 @@ def regex_value_valid(field: str, value: str) -> bool:
     if len(s) > 120 or s.count("\n") > 1:
         return False
     low = s.lower()
+    if field == "tender_id":
+        if not re.search(r"\d", s):
+            return False
     if field in ("emd", "tender_fee", "performance_guarantee"):
         if not re.search(r"\d", s):
             return False
@@ -507,7 +855,32 @@ def safe_stem(s: str) -> str:
 
 def get_chat_response(query: str, context: List[Dict]) -> str:
     if LLM_CLIENT is None:
-        return "LLM Client not available."
+        # Lightweight fallback using regex on retrieved context
+        combined = ""
+        for item in context:
+            combined += (item.get("text","") or "") + "\n"
+        if not combined.strip():
+            return "LLM Client not available and no document context found."
+        extracted = regex_extract(combined)
+        q = query.lower()
+        if "tender id" in q or "tender no" in q or "ref" in q:
+            return extracted.get("tender_id") or "Tender ID not found in the available context."
+        if "location" in q or "place" in q or "address" in q:
+            return extracted.get("location") or "Location not found in the available context."
+        if "deadline" in q or "last date" in q or "submission" in q:
+            return extracted.get("submission_deadline") or "Submission deadline not found in the available context."
+        if "emd" in q or "earnest" in q:
+            return extracted.get("emd") or "EMD not found in the available context."
+        if "fee" in q:
+            return extracted.get("tender_fee") or "Tender fee not found in the available context."
+        if "opening" in q:
+            return extracted.get("bid_opening_date") or "Bid opening date not found in the available context."
+        if "summary" in q or "scope" in q:
+            fallback = build_fallback_summary_from_text(combined, extracted)
+            return fallback or "Summary not available from the current context."
+        # default fallback
+        fallback = build_fallback_summary_from_text(combined, extracted)
+        return fallback or "No relevant answer found in the available context."
     
     # Build context string
     ctx_str = ""

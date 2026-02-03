@@ -54,9 +54,12 @@ class ChromaVectorStore:
 
         self.collection.add(ids=ids, documents=documents, metadatas=metadatas)
 
-    def search(self, query: str, k: int = 5):
+    def search(self, query: str, k: int = 5, where: dict = None):
         try:
-            results = self.collection.query(query_texts=[query], n_results=k)
+            if where:
+                results = self.collection.query(query_texts=[query], n_results=k, where=where)
+            else:
+                results = self.collection.query(query_texts=[query], n_results=k)
         except Exception as e:
             print("Chroma query error:", e)
             return []

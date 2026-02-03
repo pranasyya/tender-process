@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useReducer } from 'react';
+import React, { createContext, useContext, useState, useCallback } from 'react';
 
 export interface Tender {
   id: string;
@@ -17,12 +17,7 @@ export interface Tender {
   priorityScore: number;
   recommendation: string;
   reasons: string[];
-  extractedFields: {
-    tenderId: string;
-    publishDate: string;
-    emails: string[];
-    phones: string[];
-  };
+  extractedFields: Record<string, any>;
   fullText: string;
 }
 
@@ -169,10 +164,10 @@ function getMockTenders(): Tender[] {
       recommendation: 'Pursue',
       reasons: ['High O&M scope indicates long-term revenue', 'Significant project value', 'Aligned with our expertise'],
       extractedFields: {
-        tenderId: 'TEN-2024-001',
-        publishDate: '2024-01-15',
-        emails: ['procurement@ahmedabad.gov.in'],
-        phones: ['+91-79-2123456'],
+        tender_id: 'TEN-2024-001',
+        publication_date: '15-01-2024',
+        contact_emails: ['procurement@ahmedabad.gov.in'],
+        contact_phones: ['+91-79-2123456'],
       },
       fullText: 'Development of 50 MLD Water Treatment Plant with 5 years Operation and Maintenance...',
     },
@@ -192,10 +187,10 @@ function getMockTenders(): Tender[] {
       recommendation: 'Pursue',
       reasons: ['10-year O&M contract provides stable revenue', 'Growing industrial base in Surat', 'High market demand'],
       extractedFields: {
-        tenderId: 'TEN-2024-002',
-        publishDate: '2024-01-20',
-        emails: ['tenders@suratmunicipal.org'],
-        phones: ['+91-261-2123456'],
+        tender_id: 'TEN-2024-002',
+        publication_date: '20-01-2024',
+        contact_emails: ['tenders@suratmunicipal.org'],
+        contact_phones: ['+91-261-2123456'],
       },
       fullText: 'Construction of 40 MLD Common Effluent Treatment Plant with 10 years Operation and Maintenance...',
     },
@@ -215,10 +210,10 @@ function getMockTenders(): Tender[] {
       recommendation: 'Consider',
       reasons: ['EPC-only limits long-term revenue', 'Specialized technical expertise required', 'Strong engineering team needed'],
       extractedFields: {
-        tenderId: 'TEN-2024-003',
-        publishDate: '2024-01-18',
-        emails: ['projects@vadodaracity.org'],
-        phones: ['+91-265-2123456'],
+        tender_id: 'TEN-2024-003',
+        publication_date: '18-01-2024',
+        contact_emails: ['projects@vadodaracity.org'],
+        contact_phones: ['+91-265-2123456'],
       },
       fullText: 'River Intake Structure and Water Treatment Plant Development - Design, Engineering, Procurement and Construction...',
     },
@@ -238,10 +233,10 @@ function getMockTenders(): Tender[] {
       recommendation: 'Pursue',
       reasons: ['Municipal infrastructure growth', 'Proven technology deployment', 'Government priority sector'],
       extractedFields: {
-        tenderId: 'TEN-2024-004',
-        publishDate: '2024-01-17',
-        emails: ['stp@ahmedabad.gov.in'],
-        phones: ['+91-79-2654321'],
+        tender_id: 'TEN-2024-004',
+        publication_date: '17-01-2024',
+        contact_emails: ['stp@ahmedabad.gov.in'],
+        contact_phones: ['+91-79-2654321'],
       },
       fullText: 'Sewage Treatment Plant Expansion Phase 2 - 200 MLD capacity enhancement...',
     },
@@ -261,10 +256,10 @@ function getMockTenders(): Tender[] {
       recommendation: 'Consider',
       reasons: ['Infrastructure maintenance rather than growth', 'Significant logistics complexity', 'Long project duration'],
       extractedFields: {
-        tenderId: 'TEN-2024-005',
-        publishDate: '2024-01-19',
-        emails: ['waterworks@vadodara.org'],
-        phones: ['+91-265-2987654'],
+        tender_id: 'TEN-2024-005',
+        publication_date: '19-01-2024',
+        contact_emails: ['waterworks@vadodara.org'],
+        contact_phones: ['+91-265-2987654'],
       },
       fullText: 'Water Supply Network Rehabilitation and upgradation of distribution system...',
     },
@@ -284,10 +279,10 @@ function getMockTenders(): Tender[] {
       recommendation: 'Pursue',
       reasons: ['Specialized industrial expertise required', 'Long-term O&M contract', 'Growing industrial sector demand'],
       extractedFields: {
-        tenderId: 'TEN-2024-006',
-        publishDate: '2024-01-21',
-        emails: ['industrial@suratpark.org'],
-        phones: ['+91-261-2789456'],
+        tender_id: 'TEN-2024-006',
+        publication_date: '21-01-2024',
+        contact_emails: ['industrial@suratpark.org'],
+        contact_phones: ['+91-261-2789456'],
       },
       fullText: 'Industrial Park Integrated Wastewater Management and Treatment System...',
     },

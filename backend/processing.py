@@ -16,7 +16,15 @@ from extraction import (
     postprocess_llm_json, 
     merge_candidates,
     llm_evaluate,
-    safe_stem
+    safe_stem,
+    chunk_text,
+    llm_extract_fields,
+    merge_llm_dicts,
+    build_context_from_hits,
+    is_empty_value,
+    build_fallback_summary,
+    build_fallback_summary_from_text,
+    evaluate_fallback
 )
 from vector_store import ChromaVectorStore, clean_metadata
 
@@ -69,6 +77,66 @@ def parse_date_to_ddmmYYYY_local(textval: str) -> str:
     return ""
 
 # --------------------
+# RAG Settings
+# --------------------
+RAG_CORE_FIELDS = [
+    "tender_id", "category", "title", "location", "issuing_authority",
+    "publication_date", "submission_deadline", "bid_opening_date", "bid_opening_time",
+    "emd", "tender_fee", "performance_guarantee", "contract_duration", "tender_value",
+    "contact_emails", "contact_phones"
+]
+
+RAG_CONTENT_FIELDS = [
+    "scope_of_work", "eligibility_summary", "required_documents",
+    "exclusion_criteria", "disqualification_criteria",
+    "technical_documents", "deliverables", "projects", "bidding_scope"
+]
+
+RAG_SUMMARY_FIELDS = ["short_summary"]
+
+RAG_CORE_QUERIES = [
+    "Tender ID NIT No Ref No RFP RFQ",
+    "Title Name of Work Project Title",
+    "Issued by Issuing Authority Organization Department",
+    "Publication Date Date of Issue Bid Calling",
+    "Last date of submission Bid submission deadline",
+    "Bid opening date time Opening Time",
+    "EMD Earnest Money Deposit",
+    "Tender Fee Bid Document Fee",
+    "Performance Security Performance Guarantee",
+    "Contract Duration Period of Completion",
+    "Estimated Cost Tender Value Project Cost",
+    "Contact person email phone address location"
+]
+
+RAG_CONTENT_QUERIES = [
+    "Scope of Work",
+    "Eligibility Criteria",
+    "Technical Bid Documents",
+    "Required Documents",
+    "Exclusion criteria disqualification blacklist",
+    "Deliverables",
+    "Projects portals modules",
+    "Bidding scope",
+    "Timeline and Payments"
+]
+
+RAG_SUMMARY_QUERIES = [
+    "Scope of Work",
+    "Timeline and Payments",
+    "Eligibility Criteria",
+    "Submission deadline",
+    "EMD Tender Fee Performance Security",
+    "Deliverables"
+]
+
+def _rag_context(store: ChromaVectorStore, queries: List[str], where: dict, k_per_query: int = 3, max_chars: int = 12000) -> str:
+    hits: List[Dict[str, Any]] = []
+    for q in queries:
+        hits.extend(store.search(q, k=k_per_query, where=where))
+    return build_context_from_hits(hits, max_chars=max_chars)
+
+# --------------------
 # Worker
 # --------------------
 def process_files_worker(encoded_items: List[Dict[str,str]]):
@@ -77,8 +145,9 @@ def process_files_worker(encoded_items: List[Dict[str,str]]):
     progress = {"total": total, "done": 0, "status": "running", "current_file": ""}
     write_json(prog_path, progress)
 
-    # Initialize Vector Store
-    vector_store = ChromaVectorStore()
+    # Initialize Vector Stores
+    tender_store = ChromaVectorStore(collection_name="tenders")
+    chunk_store = ChromaVectorStore(collection_name="tender_chunks")
     
     docs_to_add = []
 
@@ -111,16 +180,71 @@ def process_files_worker(encoded_items: List[Dict[str,str]]):
 
         # extract text
         text = extract_text(file_bytes, fname)
+        safe_name = safe_stem(os.path.splitext(fname)[0])
+
+        # chunk & index for RAG
+        chunks = chunk_text(
+            text,
+            max_chars=CONFIG.get("rag_chunk_chars", 3500),
+            overlap=CONFIG.get("rag_chunk_overlap", 400)
+        )
+        if chunks:
+            chunk_docs = []
+            for idx, ch in enumerate(chunks):
+                chunk_docs.append({
+                    "id": f"{safe_name}::chunk::{idx}",
+                    "text": ch,
+                    "meta": {
+                        "doc_id": safe_name,
+                        "chunk_id": idx,
+                        "source_file": upload_path,
+                        "title": fname
+                    }
+                })
+            chunk_store.add_documents(chunk_docs)
         
         # regex extract
         regexed = regex_extract(text)
 
-        # LLM extract
+        # LLM extract (RAG-first with fallback)
         global_header = build_global_header(text)
         llm_extracted = {}
         if CONFIG["use_llm_extract"]:
-            llm_raw = llm_extract_chunk(text, page_reference="all", global_header=global_header) or {}
-            llm_extracted = postprocess_llm_json(llm_raw)
+            where = {"doc_id": safe_name}
+            core_ctx = _rag_context(
+                chunk_store,
+                RAG_CORE_QUERIES,
+                where,
+                k_per_query=CONFIG.get("rag_top_k", 3),
+                max_chars=CONFIG.get("rag_context_chars", 12000)
+            )
+            content_ctx = _rag_context(
+                chunk_store,
+                RAG_CONTENT_QUERIES,
+                where,
+                k_per_query=CONFIG.get("rag_top_k", 3),
+                max_chars=CONFIG.get("rag_context_chars", 12000)
+            )
+            summary_ctx = _rag_context(
+                chunk_store,
+                RAG_SUMMARY_QUERIES,
+                where,
+                k_per_query=CONFIG.get("rag_top_k", 4),
+                max_chars=CONFIG.get("rag_context_chars", 12000)
+            )
+            llm_parts = []
+            if core_ctx:
+                llm_parts.append(llm_extract_fields(core_ctx, RAG_CORE_FIELDS, page_reference="rag-core", global_header=global_header))
+            if content_ctx:
+                llm_parts.append(llm_extract_fields(content_ctx, RAG_CONTENT_FIELDS, page_reference="rag-content", global_header=global_header))
+            if CONFIG.get("use_llm_summary", True) and summary_ctx:
+                llm_parts.append(llm_extract_fields(summary_ctx, RAG_SUMMARY_FIELDS, page_reference="rag-summary", global_header=global_header))
+            if llm_parts:
+                llm_extracted = merge_llm_dicts(llm_parts)
+                llm_extracted = postprocess_llm_json(llm_extracted)
+            else:
+                llm_raw = llm_extract_chunk(text, page_reference="all", global_header=global_header) or {}
+                llm_extracted = postprocess_llm_json(llm_raw)
 
         # merge
         merged = merge_candidates(regexed, llm_extracted)
@@ -143,6 +267,8 @@ def process_files_worker(encoded_items: List[Dict[str,str]]):
                     final_obj[k] = []
             else:
                 final_obj[k] = val if val is not None else ""
+                if is_empty_value(k, final_obj[k]):
+                    final_obj[k] = "N/A"
         
         # Date normalization
         for dk in ("submission_deadline","publication_date","bid_opening_date"):
@@ -152,19 +278,37 @@ def process_files_worker(encoded_items: List[Dict[str,str]]):
                 final_obj[dk] = normalized
         _date_sanity_fix(final_obj)
 
-        if not final_obj.get("title"):
+        # Ensure tender_id is actually present in the document text
+        tender_id_val = (final_obj.get("tender_id") or "").strip()
+        if tender_id_val and tender_id_val.upper() not in {"N/A", "NA"}:
+            if tender_id_val.lower() not in text.lower():
+                final_obj["tender_id"] = "N/A"
+
+        if not final_obj.get("title") or final_obj.get("title") == "N/A":
             m_now = re.search(r"(?is)Name\s*of\s*Work\s*[:\-]\s*(.+?)(?:\n|$)", text)
             if m_now:
                 final_obj["title"] = m_now.group(1).strip()
+        if not final_obj.get("title"):
+            final_obj["title"] = "N/A"
+
+        if not final_obj.get("category"):
+            final_obj["category"] = "N/A"
+
+        if not final_obj.get("short_summary") or final_obj.get("short_summary") == "N/A":
+            fallback_summary = build_fallback_summary(final_obj)
+            if not fallback_summary:
+                fallback_summary = build_fallback_summary_from_text(text, final_obj)
+            final_obj["short_summary"] = fallback_summary if fallback_summary else "Summary not available"
 
         # LLM Eval
         eval_res = {}
         if CONFIG["use_llm_eval"]:
             eval_res = llm_evaluate(final_obj) or {}
+        if not eval_res:
+            eval_res = evaluate_fallback(final_obj) or {}
 
         # Save artifacts
         metadata = {"extraction_meta": {"regex_candidates": regexed, "llm_candidates": llm_extracted, "eval": eval_res}}
-        safe_name = safe_stem(os.path.splitext(fname)[0])
         out_dir = os.path.join(CONFIG["extraction_output_dir"], safe_name)
         os.makedirs(out_dir, exist_ok=True)
         write_json(os.path.join(out_dir, "extraction.json"), final_obj)
@@ -172,7 +316,7 @@ def process_files_worker(encoded_items: List[Dict[str,str]]):
 
         # Prepare for Vector Store
         tender_record = {
-            "id": final_obj.get("tender_id") or fname,
+            "id": safe_name or fname,
             "title": final_obj.get("title") or fname,
             "location": final_obj.get("location") or "",
             "meta": final_obj,
@@ -202,7 +346,7 @@ def process_files_worker(encoded_items: List[Dict[str,str]]):
     # Add to Vector Store
     if docs_to_add:
         log(f"Adding {len(docs_to_add)} documents to ChromaDB...")
-        vector_store.add_documents(docs_to_add)
+        tender_store.add_documents(docs_to_add)
 
     progress["status"] = "done"
     progress["current_file"] = ""

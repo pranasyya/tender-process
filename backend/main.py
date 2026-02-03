@@ -49,7 +49,7 @@ async def get_progress():
 @app.get("/tenders")
 async def get_tenders():
     # Retrieve all tenders for dashboard
-    vs = ChromaVectorStore()
+    vs = ChromaVectorStore(collection_name="tenders")
     try:
         data = vs.get_all()
         # data has 'ids', 'metadatas' ...
@@ -57,8 +57,22 @@ async def get_tenders():
         if data and "metadatas" in data:
             for m in data["metadatas"]:
                 if m:
-                    # m is a dict, we might want to include id
-                    tenders.append(m)
+                    # m may contain JSON strings for 'meta' and 'eval'
+                    meta_raw = m.get("meta", {})
+                    eval_raw = m.get("eval", {})
+                    try:
+                        if isinstance(meta_raw, str):
+                            meta_raw = json.loads(meta_raw)
+                    except Exception:
+                        meta_raw = {}
+                    try:
+                        if isinstance(eval_raw, str):
+                            eval_raw = json.loads(eval_raw)
+                    except Exception:
+                        eval_raw = {}
+                    if isinstance(meta_raw, dict):
+                        meta_raw["eval"] = eval_raw if isinstance(eval_raw, dict) else {}
+                    tenders.append(meta_raw if isinstance(meta_raw, dict) else m)
         return tenders
     except Exception as e:
         print("Error getting tenders:", e)
@@ -67,7 +81,7 @@ async def get_tenders():
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    vs = ChromaVectorStore()
+    vs = ChromaVectorStore(collection_name="tender_chunks")
     hits = vs.search(req.query, k=3)
     resp = get_chat_response(req.query, hits)
     return {"response": resp, "context": hits}

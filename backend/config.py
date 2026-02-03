@@ -47,4 +47,8 @@ CONFIG = {
     "progress_file": "./uploads/progress.json",
     "pending_results_file": "./uploads/pending_results.json",
     "debug_logs": True,
+    "rag_chunk_chars": 3500,
+    "rag_chunk_overlap": 400,
+    "rag_top_k": 3,
+    "rag_context_chars": 12000,
 }

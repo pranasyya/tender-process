@@ -4,79 +4,80 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: #f8f9fc;
-  --foreground: #1a202c;
+  --background: #f6f8fb;
+  --foreground: #0b1220;
   --card: #ffffff;
-  --card-foreground: #1a202c;
+  --card-foreground: #0b1220;
   --popover: #ffffff;
-  --popover-foreground: #1a202c;
-  --primary: #7c3aed;
+  --popover-foreground: #0b1220;
+  --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --secondary: #ec4899;
+  --secondary: #f97316;
   --secondary-foreground: #ffffff;
-  --muted: #e2e8f0;
-  --muted-foreground: #64748b;
-  --accent: #06b6d4;
-  --accent-foreground: #0f172a;
+  --muted: #e6ebf4;
+  --muted-foreground: #5b6b86;
+  --accent: #22c55e;
+  --accent-foreground: #0b1220;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --border: #e2e8f0;
-  --input: #f1f5f9;
-  --ring: #7c3aed;
-  --chart-1: #7c3aed;
-  --chart-2: #ec4899;
-  --chart-3: #06b6d4;
-  --chart-4: #8b5cf6;
+  --border: #dde3ee;
+  --input: #f2f5fa;
+  --ring: #2563eb;
+  --chart-1: #2563eb;
+  --chart-2: #f97316;
+  --chart-3: #22c55e;
+  --chart-4: #38bdf8;
   --chart-5: #f43f5e;
   --radius: 0.625rem;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #1a202c;
-  --sidebar-primary: #7c3aed;
+  --sidebar: #0b1220;
+  --sidebar-foreground: #e7edf8;
+  --sidebar-primary: #2563eb;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f3e8ff;
-  --sidebar-accent-foreground: #7c3aed;
-  --sidebar-border: #e2e8f0;
-  --sidebar-ring: #7c3aed;
+  --sidebar-accent: #162033;
+  --sidebar-accent-foreground: #e7edf8;
+  --sidebar-border: #131c2e;
+  --sidebar-ring: #2563eb;
 }
 
 .dark {
-  --background: #0f172a;
-  --foreground: #f1f5f9;
-  --card: #1e293b;
-  --card-foreground: #f1f5f9;
-  --popover: #1e293b;
-  --popover-foreground: #f1f5f9;
-  --primary: #a78bfa;
-  --primary-foreground: #1a0f3e;
-  --secondary: #f472b6;
-  --secondary-foreground: #1a0f3e;
-  --muted: #334155;
-  --muted-foreground: #94a3b8;
-  --accent: #22d3ee;
-  --accent-foreground: #0f172a;
+  --background: #0b0f1a;
+  --foreground: #e7edf8;
+  --card: #121a2a;
+  --card-foreground: #e7edf8;
+  --popover: #121a2a;
+  --popover-foreground: #e7edf8;
+  --primary: #3b82f6;
+  --primary-foreground: #0b1220;
+  --secondary: #fb923c;
+  --secondary-foreground: #0b1220;
+  --muted: #1b2438;
+  --muted-foreground: #9aa7c2;
+  --accent: #22c55e;
+  --accent-foreground: #0b1220;
   --destructive: #f87171;
-  --destructive-foreground: #1a0f3e;
-  --border: #334155;
-  --input: #1e293b;
-  --ring: #a78bfa;
-  --chart-1: #a78bfa;
-  --chart-2: #f472b6;
-  --chart-3: #22d3ee;
-  --chart-4: #c084fc;
-  --chart-5: #fb7185;
-  --sidebar: #1e293b;
-  --sidebar-foreground: #f1f5f9;
-  --sidebar-primary: #a78bfa;
-  --sidebar-primary-foreground: #1a0f3e;
-  --sidebar-accent: #2e1065;
-  --sidebar-accent-foreground: #a78bfa;
-  --sidebar-border: #334155;
-  --sidebar-ring: #a78bfa;
+  --destructive-foreground: #0b1220;
+  --border: #1f2a42;
+  --input: #141d2f;
+  --ring: #3b82f6;
+  --chart-1: #3b82f6;
+  --chart-2: #fb923c;
+  --chart-3: #22c55e;
+  --chart-4: #38bdf8;
+  --chart-5: #f97316;
+  --sidebar: #0b1220;
+  --sidebar-foreground: #e7edf8;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #0b1220;
+  --sidebar-accent: #121a2a;
+  --sidebar-accent-foreground: #e7edf8;
+  --sidebar-border: #1b253b;
+  --sidebar-ring: #3b82f6;
 }
 
 @theme inline {
-  --font-sans: 'Geist', 'Geist Fallback';
-  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-sans);
+  --font-display: var(--font-display);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -121,6 +122,13 @@
   }
   body {
     @apply bg-background text-foreground transition-colors duration-300;
+    background-image:
+      radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), transparent 45%),
+      radial-gradient(circle at bottom right, rgba(249, 115, 22, 0.14), transparent 40%);
+    background-attachment: fixed;
+  }
+  .font-display {
+    font-family: var(--font-display), var(--font-sans);
   }
   html {
     scroll-behavior: smooth;

@@ -2,32 +2,36 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useSearchParams } from 'next/navigation';
 import { useTender, type Tender } from '@/app/context/TenderContext';
 import { api } from '@/lib/api';
 import {
-  Search,
-  X,
-  Filter,
-  MapPin,
-  Calendar,
-  MessageCircle,
-  Info,
-  Droplet,
-  Factory,
-  Building2,
-  TrendingUp,
+  Sparkles,
+  CheckCircle2,
+  AlertTriangle,
+  FileText,
   ChevronRight,
-  AlertCircle,
+  FileSearch,
 } from 'lucide-react';
 import Loading from './loading';
 
+type FieldValue = string | string[] | undefined;
+
+const safeText = (value?: string) => {
+  if (!value) return 'N/A';
+  const v = value.trim();
+  if (!v || v.toLowerCase() === 'n/a' || v.toLowerCase() === 'na') return 'N/A';
+  return v;
+};
+
+const toList = (value?: FieldValue) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return value.split(/[\n;,•]+/).map(v => v.trim()).filter(Boolean);
+};
+
 export default function DashboardPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const { filters, setFilters, selectedTender, setSelectedTender } = useTender();
-
-  // Local state for tenders fetched from API
+  const { filters, setSelectedTender } = useTender();
   const [tenders, setTenders] = useState<Tender[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedPanel, setExpandedPanel] = useState<Tender | null>(null);
@@ -36,10 +40,9 @@ export default function DashboardPage() {
     const fetchTenders = async () => {
       try {
         const data = await api.getTenders();
-        // Cast or map to Context Tender type if needed, but they should be compatible based on my design
         setTenders(data as any);
       } catch (err) {
-        console.error("Failed to fetch tenders", err);
+        console.error('Failed to fetch tenders', err);
       } finally {
         setIsLoading(false);
       }
@@ -52,12 +55,10 @@ export default function DashboardPage() {
     router.push('/chat');
   };
 
-
   const handleMoreDetails = (tender: Tender) => {
     setExpandedPanel(tender);
   };
 
-  // Filter logic
   const filteredTenders = tenders.filter(tender => {
     if (filters.searchQuery) {
       const query = filters.searchQuery.toLowerCase();
@@ -68,391 +69,386 @@ export default function DashboardPage() {
         return false;
       }
     }
-
-    if (filters.location !== 'All' && tender.location !== filters.location) {
-      return false;
-    }
-
-    if (filters.valueRange !== 'All') {
-      const value = tender.valueInCrores;
-      if (filters.valueRange === '<50' && value >= 50) return false;
-      if (filters.valueRange === '50-100' && (value < 50 || value > 100)) return false;
-      if (filters.valueRange === '100-200' && (value < 100 || value > 200)) return false;
-      if (filters.valueRange === '>200' && value <= 200) return false;
-    }
-
-    if (filters.contractType !== 'All' && !tender.contractType.includes(filters.contractType)) {
-      return false;
-    }
-
-    if (filters.deadline !== 'All') {
-      const deadlineDate = new Date(tender.deadlineDate);
-      const now = new Date();
-      const daysUntilDeadline = Math.ceil((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-      if (filters.deadline === '30' && daysUntilDeadline > 30) return false;
-      if (filters.deadline === '60' && daysUntilDeadline > 60) return false;
-      if (filters.deadline === '90' && daysUntilDeadline > 90) return false;
-    }
-
     return true;
   });
 
-  const getCategoryIcon = (category: string) => {
-    if (category.includes('WTP') || category.includes('Water Treatment'))
-      return <Droplet className="w-6 h-6" />;
-    if (category.includes('CETP') || category.includes('Industrial'))
-      return <Factory className="w-6 h-6" />;
-    return <Building2 className="w-6 h-6" />;
-  };
+  const activeTender = expandedPanel || filteredTenders[0];
+  const activeMeta = (activeTender?.extractedFields || {}) as Record<string, any>;
 
-  const getActiveFilters = () => {
-    const active = [];
-    if (filters.searchQuery) active.push(filters.searchQuery);
-    if (filters.location !== 'All') active.push(filters.location);
-    if (filters.valueRange !== 'All') active.push(`₹${filters.valueRange}Cr`);
-    if (filters.contractType !== 'All') active.push(filters.contractType);
-    if (filters.deadline !== 'All') active.push(`${filters.deadline} days`);
-    return active;
-  };
+  const score = Math.min(100, Math.max(0, Math.round((activeTender?.priorityScore || 0) * 10)));
+  const techScore = Math.min(98, Math.max(60, score + 8));
+  const commercialRisk = Math.max(20, 100 - score);
+  const resourceScore = Math.min(96, techScore + 6);
+  const relationshipScore = Math.max(40, techScore - 20);
+
+  const complianceItems = [
+    ...toList(activeMeta.eligibility_summary).slice(0, 2),
+    ...toList(activeMeta.required_documents).slice(0, 1),
+  ].slice(0, 3);
+
+  const criticalParams = [
+    safeText(activeMeta.tender_value) !== 'N/A' ? `Value: ${safeText(activeMeta.tender_value)}` : null,
+    safeText(activeMeta.emd) !== 'N/A' ? `EMD: ${safeText(activeMeta.emd)}` : null,
+    safeText(activeMeta.submission_deadline) !== 'N/A' ? `Deadline: ${safeText(activeMeta.submission_deadline)}` : null,
+    safeText(activeMeta.contract_duration) !== 'N/A' ? `Duration: ${safeText(activeMeta.contract_duration)}` : null,
+  ].filter(Boolean) as string[];
+
+  const keyRisks = (activeTender?.reasons || []).length
+    ? activeTender?.reasons
+    : toList(activeMeta?.eval?.key_risks);
+
+  if (isLoading) {
+    return <Loading />;
+  }
 
   return (
-    <div className="min-h-screen bg-background">
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        <div className="mb-8">
-          <h2 className="text-4xl font-bold text-foreground mb-2">Available Tenders</h2>
-          <p className="text-muted-foreground text-lg">
-            Showing <span className="font-semibold text-foreground">{filteredTenders.length}</span> of <span className="font-semibold text-foreground">{tenders.length}</span> tenders
-          </p>
-        </div>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-3xl sm:text-4xl font-display font-semibold text-foreground">
+          Tender Intelligence Engine
+        </h1>
+        <p className="text-muted-foreground text-lg">
+          Welcome back. Here is what happened with your tenders today.
+        </p>
+      </div>
 
-        {/* Search and Filters */}
-        <div className="mb-6 space-y-4">
-          {/* Search Bar */}
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search by title or location..."
-              value={filters.searchQuery}
-              onChange={e => setFilters({ searchQuery: e.target.value })}
-              className="w-full pl-12 pr-4 py-3 border border-border rounded-xl bg-card focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
-            />
-          </div>
-
-          {/* Filter Controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <select
-              value={filters.location}
-              onChange={e => setFilters({ location: e.target.value })}
-              className="px-4 py-2 border border-border rounded-xl bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
-            >
-              <option value="All">All Locations</option>
-              <option value="Ahmedabad">Ahmedabad</option>
-              <option value="Surat">Surat</option>
-              <option value="Vadodara">Vadodara</option>
-            </select>
-
-            <select
-              value={filters.valueRange}
-              onChange={e => setFilters({ valueRange: e.target.value })}
-              className="px-4 py-2 border border-border rounded-xl bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
-            >
-              <option value="All">All Values</option>
-              <option value="<50">Less than ₹50Cr</option>
-              <option value="50-100">₹50-100 Cr</option>
-              <option value="100-200">₹100-200 Cr</option>
-              <option value=">200">Greater than ₹200 Cr</option>
-            </select>
-
-            <select
-              value={filters.contractType}
-              onChange={e => setFilters({ contractType: e.target.value })}
-              className="px-4 py-2 border border-border rounded-xl bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
-            >
-              <option value="All">All Contract Types</option>
-              <option value="O&M">O&M</option>
-              <option value="EPC">EPC</option>
-              <option value="Design-Build">Design-Build</option>
-            </select>
-
-            <select
-              value={filters.deadline}
-              onChange={e => setFilters({ deadline: e.target.value })}
-              className="px-4 py-2 border border-border rounded-xl bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200"
-            >
-              <option value="All">All Deadlines</option>
-              <option value="30">Next 30 days</option>
-              <option value="60">Next 60 days</option>
-              <option value="90">Next 90 days</option>
-            </select>
-
-            <button
-              onClick={() =>
-                setFilters({
-                  searchQuery: '',
-                  location: 'All',
-                  valueRange: 'All',
-                  contractType: 'All',
-                  deadline: 'All',
-                })
-              }
-              className="px-4 py-2 border border-border rounded-xl bg-card text-sm hover:bg-muted transition-colors duration-200 font-medium"
-            >
-              Clear Filters
-            </button>
-          </div>
-
-          {/* Active Filters */}
-          {getActiveFilters().length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {getActiveFilters().map(filter => (
-                <span
-                  key={filter}
-                  className="px-3 py-1 bg-primary/10 text-primary text-sm rounded-full flex items-center gap-2"
-                >
-                  {filter}
-                  <X className="w-3 h-3" />
+      <div className="grid xl:grid-cols-[2fr_1fr] gap-6">
+        {/* Left column */}
+        <div className="space-y-6">
+          {activeTender ? (
+            <div className="rounded-2xl border border-border bg-card shadow-sm p-6">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-2">
+                    Active Analysis
+                  </p>
+                  <h2 className="text-2xl font-display font-semibold text-foreground">
+                    {activeTender.title}
+                  </h2>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {safeText(activeMeta.issuing_authority)} | Ref: {safeText(activeMeta.tender_id)}
+                  </p>
+                </div>
+                <span className="px-4 py-2 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-700">
+                  {activeTender.recommendation}
                 </span>
-              ))}
+              </div>
+
+              <div className="mt-6 grid lg:grid-cols-2 gap-6">
+                <div className="rounded-2xl border border-border bg-muted/40 p-5">
+                  <div className="flex items-center gap-2 text-primary font-semibold mb-3">
+                    <Sparkles className="w-4 h-4" />
+                    AI-Generated Executive Summary
+                  </div>
+                  <p className="text-sm text-foreground/80 leading-relaxed">
+                    {safeText(activeMeta.short_summary || activeTender.summary)}
+                  </p>
+                </div>
+                <div className="grid gap-4">
+                  <div className="rounded-2xl border border-border p-5">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
+                      Key Compliance PQR
+                    </p>
+                    <div className="space-y-3 text-sm">
+                      {complianceItems.length > 0 ? (
+                        complianceItems.map(item => (
+                          <div key={item} className="flex items-start gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5" />
+                            <span>{item}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-muted-foreground">Eligibility details not available.</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-border p-5">
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
+                      Critical Parameters
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {criticalParams.length > 0 ? (
+                        criticalParams.map(tag => (
+                          <span key={tag} className="px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary">
+                            {tag}
+                          </span>
+                        ))
+                      ) : (
+                        <p className="text-muted-foreground text-sm">No critical parameters detected yet.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-border bg-card p-6 text-muted-foreground">
+              No tenders available. Upload documents to start analysis.
             </div>
           )}
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Tender Cards */}
-          <div className="lg:col-span-3">
-            {filteredTenders.length === 0 ? (
-              <div className="p-8 text-center border border-border rounded-lg bg-card">
-                <AlertCircle className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-foreground font-medium mb-1">No tenders found</p>
-                <p className="text-muted-foreground text-sm">Try adjusting your filters</p>
+          {/* Processed package list */}
+          <div className="rounded-2xl border border-border bg-card shadow-sm">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div>
+                <h3 className="font-semibold text-foreground">Processed Package ({filteredTenders.length} Documents)</h3>
+                <p className="text-sm text-muted-foreground">AI extraction confidence based on priority score.</p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredTenders.map(tender => (
-                  <div
-                    key={tender.id}
-                    className="p-6 border border-border rounded-xl bg-card hover:shadow-lg hover:border-primary/50 transition-all duration-300 group"
-                  >
-                    {/* Header */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                        {getCategoryIcon(tender.category)}
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-foreground">₹{tender.valueInCrores} Cr</p>
-                        <p className="text-xs text-muted-foreground">EMD: ₹{tender.emdInCrores} Cr</p>
-                      </div>
-                    </div>
-
-                    {/* Title */}
-                    <h3 className="font-bold text-foreground mb-3 line-clamp-2 leading-snug">
-                      {tender.title}
-                    </h3>
-
-                    {/* Details */}
-                    <div className="space-y-2 mb-4 text-sm">
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <MapPin className="w-4 h-4 flex-shrink-0" />
-                        <span>{tender.location}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-muted-foreground">
-                        <Calendar className="w-4 h-4 flex-shrink-0" />
-                        <span>{new Date(tender.deadlineDate).toLocaleDateString()}</span>
-                      </div>
-                      <div className="text-muted-foreground">
-                        <span>{tender.contractType}, {tender.duration}</span>
-                      </div>
-                    </div>
-
-                    {/* Tags */}
-                    <div className="flex flex-wrap gap-2 mb-4">
-                      {tender.tags.map(tag => (
-                        <span
-                          key={tag}
-                          className={`text-xs px-3 py-1 rounded-full font-semibold ${tag === 'High O&M scope'
-                              ? 'bg-primary/20 text-primary border border-primary/30'
-                              : 'bg-secondary/20 text-secondary border border-secondary/30'
-                            }`}
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-
-                    {/* Buttons */}
-                    <div className="flex gap-2 pt-2">
-                      <button
-                        onClick={() => handleMoreDetails(tender)}
-                        className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-muted hover:border-primary/50 transition-all duration-200"
-                      >
-                        More Details
-                      </button>
-                      <button
-                        onClick={() => handleAskAI(tender)}
-                        className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:shadow-lg hover:shadow-primary/30 transition-all duration-200 flex items-center justify-center gap-2"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        Ask Megha
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Right Panel - AI Recommendation & Details */}
-          <div className="space-y-6">
-            {/* AI Recommendation Box */}
-            <div className="p-6 border border-primary/20 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 shadow-sm">
-              <div className="flex items-start gap-4">
-                <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-                  <TrendingUp className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-foreground mb-2">Megha AI Insights</h3>
-                  <p className="text-sm text-foreground/80 leading-relaxed">
-                    Focus on Ahmedabad and Surat projects due to higher O&M potential. Vadodara EPC-only projects have limited long-term revenue opportunities.
-                  </p>
-                </div>
-              </div>
+              <button className="text-sm text-primary font-semibold">Download All Data</button>
             </div>
-
-            {/* Selected Tender Details Panel */}
-            {expandedPanel && (
-              <div
-                className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
-                onClick={() => setExpandedPanel(null)}
-              />
-            )}
-
-            <div
-              className={`${expandedPanel
-                  ? 'fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-2xl max-h-[80vh] overflow-y-auto'
-                  : 'hidden lg:block'
-                } p-8 border border-white/20 rounded-2xl bg-card/80 backdrop-blur-xl shadow-2xl`}
-            >
-              {expandedPanel ? (
-                <>
-                  <div className="flex items-start justify-between mb-6 pb-6 border-b border-white/10">
-                    <div className="flex-1 pr-4">
-                      <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center text-primary mb-3">
-                        {getCategoryIcon(expandedPanel.category)}
-                      </div>
-                      <h3 className="font-bold text-xl text-foreground">{expandedPanel.title}</h3>
-                      <p className="text-sm text-muted-foreground mt-1">{expandedPanel.category}</p>
-                    </div>
+            <div className="divide-y divide-border">
+              {filteredTenders.map(tender => (
+                <div key={tender.id} className="flex items-center gap-4 px-6 py-4 hover:bg-muted/40">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-foreground">{tender.title}</p>
+                    <p className="text-xs text-muted-foreground">{tender.location} • {tender.category}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-emerald-600">
+                      {Math.min(100, Math.round((tender.priorityScore || 7) * 10))}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">Extraction Confidence</p>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setExpandedPanel(null)}
-                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                      onClick={() => handleMoreDetails(tender)}
+                      className="px-3 py-2 text-xs font-semibold border border-border rounded-lg"
                     >
-                      <X className="w-5 h-5 text-foreground" />
+                      Details
+                    </button>
+                    <button
+                      onClick={() => handleAskAI(tender)}
+                      className="px-3 py-2 text-xs font-semibold bg-primary text-primary-foreground rounded-lg"
+                    >
+                      Ask Megha
                     </button>
                   </div>
-
-                  <div className="space-y-5">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
-                        <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">
-                          Tender Value
-                        </p>
-                        <p className="font-bold text-lg text-primary">
-                          ₹{expandedPanel.valueInCrores} Cr
-                        </p>
-                      </div>
-                      <div className="p-4 rounded-xl bg-secondary/10 border border-secondary/20">
-                        <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">
-                          EMD Amount
-                        </p>
-                        <p className="font-bold text-lg text-secondary">
-                          ₹{expandedPanel.emdInCrores} Cr
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                      <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">
-                        Location
-                      </p>
-                      <p className="text-foreground font-medium flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-primary" />
-                        {expandedPanel.location}
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                        <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">
-                          Deadline
-                        </p>
-                        <p className="text-foreground font-medium flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-accent" />
-                          {new Date(expandedPanel.deadlineDate).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                        <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">
-                          Tender ID
-                        </p>
-                        <p className="text-foreground font-mono text-sm truncate">
-                          {expandedPanel.extractedFields.tenderId}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                      <p className="text-xs text-muted-foreground uppercase font-semibold mb-3">
-                        Project Summary
-                      </p>
-                      <p className="text-sm text-foreground leading-relaxed">
-                        {expandedPanel.summary}
-                      </p>
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-gradient-to-br from-primary/15 to-secondary/15 border border-primary/30">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">
-                            Megha AI Recommendation
-                          </p>
-                          <p className="font-bold text-lg text-primary mb-1">{expandedPanel.recommendation}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-2xl font-bold text-primary">{expandedPanel.priorityScore}</p>
-                          <p className="text-xs text-muted-foreground">Priority Score</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                      <p className="text-xs text-muted-foreground uppercase font-semibold mb-3">
-                        Key Reasons
-                      </p>
-                      <ul className="space-y-2">
-                        {expandedPanel.reasons.map((reason, idx) => (
-                          <li key={idx} className="text-sm text-foreground flex gap-3">
-                            <span className="text-primary font-bold text-lg flex-shrink-0">✓</span>
-                            <span>{reason}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-8">
-                  <Info className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    Click "More Details" on any tender to view full information
-                  </p>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </div>
-              )}
+              ))}
             </div>
           </div>
         </div>
-      </main>
+
+        {/* Right column */}
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-border bg-card shadow-sm p-6">
+            <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground mb-4">
+              <FileSearch className="w-4 h-4 text-primary" />
+              Bid / No-Bid Intelligence
+            </div>
+            <div className="flex flex-col items-center gap-4">
+              <div
+                className="w-36 h-36 rounded-full flex items-center justify-center"
+                style={{
+                  background: `conic-gradient(var(--primary) ${score * 3.6}deg, var(--muted) 0deg)`,
+                }}
+              >
+                <div className="w-28 h-28 rounded-full bg-card flex items-center justify-center">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-foreground">{score}%</p>
+                    <p className="text-xs text-muted-foreground">SCORE</p>
+                  </div>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Recommendation: <span className="text-emerald-600 font-semibold">{activeTender?.recommendation || 'Review'}</span>
+              </p>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <Metric label="Technical Feasibility" value={techScore} color="bg-emerald-500" />
+              <Metric label="Commercial Risk" value={commercialRisk} color="bg-amber-500" />
+              <Metric label="Resource Availability" value={resourceScore} color="bg-emerald-500" />
+              <Metric label="Client Relationship" value={relationshipScore} color="bg-blue-500" />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card shadow-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-muted-foreground">Critical Alerts</p>
+              <span className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700">
+                {keyRisks.length || 0} NEW
+              </span>
+            </div>
+            {keyRisks.length ? (
+              keyRisks.map((risk, idx) => (
+                <div key={idx} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <AlertTriangle className="inline w-4 h-4 mr-2" />
+                  {risk}
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">No critical alerts detected.</p>
+            )}
+            <button className="w-full py-3 rounded-xl bg-slate-900 text-white font-semibold">
+              Generate Full Bid Report
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Details modal */}
+      {expandedPanel && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={() => setExpandedPanel(null)}
+          />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-4xl max-h-[85vh] overflow-y-auto rounded-2xl border border-border bg-card shadow-2xl p-6">
+            <div className="flex items-start justify-between gap-4 pb-6 border-b border-border">
+              <div>
+                <h3 className="text-xl font-display font-semibold text-foreground">{expandedPanel.title}</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {safeText(activeMeta.issuing_authority)} • {safeText(activeMeta.location)}
+                </p>
+              </div>
+              <button
+                onClick={() => setExpandedPanel(null)}
+                className="px-3 py-2 text-sm rounded-lg border border-border"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-6">
+              <DetailSection
+                title="Tender Overview"
+                fields={[
+                  { label: 'Tender ID', value: activeMeta.tender_id },
+                  { label: 'Category', value: activeMeta.category },
+                  { label: 'Title', value: activeMeta.title },
+                  { label: 'Location', value: activeMeta.location },
+                  { label: 'Issuing Authority', value: activeMeta.issuing_authority },
+                ]}
+              />
+              <DetailSection
+                title="Dates & Duration"
+                fields={[
+                  { label: 'Publication Date', value: activeMeta.publication_date },
+                  { label: 'Submission Deadline', value: activeMeta.submission_deadline },
+                  { label: 'Bid Opening Date', value: activeMeta.bid_opening_date },
+                  { label: 'Bid Opening Time', value: activeMeta.bid_opening_time },
+                  { label: 'Contract Duration', value: activeMeta.contract_duration },
+                ]}
+              />
+              <DetailSection
+                title="Financials"
+                fields={[
+                  { label: 'Tender Value', value: activeMeta.tender_value },
+                  { label: 'EMD', value: activeMeta.emd },
+                  { label: 'Tender Fee', value: activeMeta.tender_fee },
+                  { label: 'Performance Guarantee', value: activeMeta.performance_guarantee },
+                ]}
+              />
+              <DetailSection
+                title="Contacts"
+                fields={[
+                  { label: 'Contact Emails', value: activeMeta.contact_emails, isList: true },
+                  { label: 'Contact Phones', value: activeMeta.contact_phones, isList: true },
+                ]}
+              />
+              <DetailSection
+                title="Scope & Summary"
+                fields={[
+                  { label: 'Scope of Work', value: activeMeta.scope_of_work, full: true },
+                  { label: 'Short Summary', value: activeMeta.short_summary, full: true },
+                  { label: 'Bidding Scope', value: activeMeta.bidding_scope, full: true },
+                ]}
+              />
+              <DetailSection
+                title="Eligibility & Criteria"
+                fields={[
+                  { label: 'Eligibility Summary', value: activeMeta.eligibility_summary, full: true },
+                  { label: 'Exclusion Criteria', value: activeMeta.exclusion_criteria, full: true },
+                  { label: 'Disqualification Criteria', value: activeMeta.disqualification_criteria, full: true },
+                ]}
+              />
+              <DetailSection
+                title="Documents & Deliverables"
+                fields={[
+                  { label: 'Required Documents', value: activeMeta.required_documents, full: true },
+                  { label: 'Technical Documents', value: activeMeta.technical_documents, full: true },
+                  { label: 'Deliverables', value: activeMeta.deliverables, full: true },
+                ]}
+              />
+              <DetailSection
+                title="Projects"
+                fields={[
+                  { label: 'Projects', value: activeMeta.projects, isList: true },
+                ]}
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-sm mb-2">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-semibold text-foreground">{value}%</span>
+      </div>
+      <div className="h-2 rounded-full bg-muted">
+        <div className={`h-2 rounded-full ${color}`} style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function DetailSection({
+  title,
+  fields,
+}: {
+  title: string;
+  fields: { label: string; value: FieldValue; isList?: boolean; full?: boolean }[];
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-muted/30 p-5">
+      <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+        {title}
+      </h4>
+      <div className="grid sm:grid-cols-2 gap-4">
+        {fields.map(field => {
+          const isList = field.isList;
+          const full = field.full;
+          const value = field.value;
+          const listItems = isList ? toList(value) : [];
+
+          return (
+            <div
+              key={field.label}
+              className={`rounded-xl border border-border bg-card p-4 ${full ? 'sm:col-span-2' : ''}`}
+            >
+              <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-2">
+                {field.label}
+              </p>
+              {isList ? (
+                listItems.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {listItems.map(item => (
+                      <span key={item} className="px-2 py-1 rounded-full text-xs bg-primary/10 text-primary">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">N/A</p>
+                )
+              ) : (
+                <p className="text-sm text-foreground/90 leading-relaxed">{safeText(String(value || ''))}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

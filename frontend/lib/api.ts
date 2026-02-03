@@ -66,21 +66,43 @@ export const api = {
             // Helper to parse currency strings to numbers
             const parseCurrency = (str: string) => {
                 if (!str) return 0;
-                // Remove currency symbols, commas, 'Cr', etc
-                const clean = str.replace(/[^\d.]/g, '');
-                return parseFloat(clean) || 0;
+                const s = String(str).toLowerCase().trim();
+                if (!s || s === 'n/a' || s === 'na') return 0;
+                const numMatch = s.match(/[\d,.]+/);
+                if (!numMatch) return 0;
+                const num = parseFloat(numMatch[0].replace(/,/g, ''));
+                if (Number.isNaN(num)) return 0;
+
+                // Unit-aware conversion to crores
+                if (/\bcr\b|crore|crores/.test(s)) return num;
+                if (/lakh|lakhs|lac|lacs/.test(s)) return num / 100;
+                if (/million/.test(s)) return num / 10;   // 1 million = 0.1 crore
+                if (/billion/.test(s)) return num * 100;  // 1 billion = 100 crore
+                if (/thousand|k\b/.test(s)) return num / 100000;
+
+                // If currency symbol present, assume rupees
+                if (/₹|rs\.?/.test(s)) return num / 1e7;
+
+                // Fallback: treat large numbers as rupees
+                if (num >= 100000) return num / 1e7;
+
+                // Otherwise assume already in crores
+                return num;
             };
 
             // Helper to parse date to YYYY-MM-DD
             const parseDate = (str: string) => {
-                if (!str) return new Date().toISOString().split('T')[0];
-                // Expecting DD-MM-YYYY from backend
-                const parts = str.split('-');
+                if (!str) return '';
+                const s = String(str).trim();
+                if (!s || s.toLowerCase() === 'n/a' || s.toLowerCase() === 'na') return '';
+                if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+                const parts = s.split(/[-/]/);
                 if (parts.length === 3) {
-                    // d-m-y to y-m-d
-                    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+                    const [d, m, y] = parts;
+                    const yy = y.length === 2 ? `20${y}` : y;
+                    return `${yy}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
                 }
-                return str;
+                return '';
             };
 
             const meta = item || {};
